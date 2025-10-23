@@ -1,0 +1,120 @@
+name: Go Build and Test CI
+
+on:
+  push:
+    branches: [ main, test, dev ]
+  pull_request:
+    branches: [ main, test ]
+
+jobs:
+  build-and-test:
+    name: Build and Test Go Application
+    runs-on: ubuntu-latest
+    
+    # Serwis PostgreSQL dla testów
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: budgetplanner_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+        cache: true
+        
+    - name: Verify Go installation
+      run: go version
+      
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Verify dependencies
+      run: go mod verify
+      
+    - name: Create .env for tests
+      run: |
+        echo "PORT=8080" > .env
+        echo "APP_ENV=test" >> .env
+        echo "BLUEPRINT_DB_HOST=localhost" >> .env
+        echo "BLUEPRINT_DB_PORT=5432" >> .env
+        echo "BLUEPRINT_DB_DATABASE=budgetplanner_test" >> .env
+        echo "BLUEPRINT_DB_USERNAME=postgres" >> .env
+        echo "BLUEPRINT_DB_PASSWORD=test_password" >> .env
+        echo "BLUEPRINT_DB_SCHEMA=public" >> .env
+        
+    - name: Run database migrations
+      run: |
+        if [ -f "init.sql" ]; then
+          PGPASSWORD=test_password psql -h localhost -U postgres -d budgetplanner_test -f init.sql
+        fi
+        
+    - name: Build application
+      run: go build -v -o budgetplanner ./cmd/api/main.go
+      
+    - name: Run tests
+      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      
+    - name: Display coverage
+      run: go tool cover -func=coverage.out
+      
+    - name: Check code formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "Code is not formatted. Run 'gofmt -s -w .'"
+          gofmt -s -l .
+          exit 1
+        fi
+        
+    - name: Run go vet
+      run: go vet ./...
+      
+    - name: Upload coverage to Codecov (optional)
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+      continue-on-error: true
+      
+    - name: Archive binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: budgetplanner-binary
+        path: budgetplanner
+        retention-days: 5
+
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+        
+    - name: Install golangci-lint
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
+        
+    - name: Run golangci-lint
+      run: $(go env GOPATH)/bin/golangci-lint run --timeout=5m
+      continue-on-error: true

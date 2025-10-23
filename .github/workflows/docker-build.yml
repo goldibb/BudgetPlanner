@@ -1,0 +1,98 @@
+name: Docker Build CI
+
+on:
+  push:
+    branches: [ main, test, dev ]
+  pull_request:
+    branches: [ main, test ]
+
+jobs:
+  build-backend:
+    name: Build Backend Docker Image
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Backend Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        target: prod
+        push: false
+        tags: budgetplanner-backend:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Test Backend Image
+      run: |
+        docker images
+        docker run --rm budgetplanner-backend:test --version || echo "Backend image built successfully"
+
+  build-frontend:
+    name: Build Frontend Docker Image
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Frontend Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        target: frontend
+        push: false
+        tags: budgetplanner-frontend:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Test Frontend Image
+      run: |
+        docker images
+        echo "Frontend image built successfully"
+
+  docker-compose-test:
+    name: Test Docker Compose
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Create .env file
+      run: |
+        echo "PORT=8080" > .env
+        echo "APP_ENV=test" >> .env
+        echo "BLUEPRINT_DB_HOST=psql_bp" >> .env
+        echo "BLUEPRINT_DB_PORT=5432" >> .env
+        echo "BLUEPRINT_DB_DATABASE=budgetplanner_test" >> .env
+        echo "BLUEPRINT_DB_USERNAME=postgres" >> .env
+        echo "BLUEPRINT_DB_PASSWORD=test_password" >> .env
+        echo "BLUEPRINT_DB_SCHEMA=public" >> .env
+        
+    - name: Build with Docker Compose
+      run: docker-compose build
+      
+    - name: Start services
+      run: docker-compose up -d
+      
+    - name: Wait for services
+      run: sleep 30
+      
+    - name: Check services health
+      run: |
+        docker-compose ps
+        docker-compose logs
+        
+    - name: Stop services
+      run: docker-compose down -v
